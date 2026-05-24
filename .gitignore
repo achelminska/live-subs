@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Modele AI (za duże na repo, pobierają się przy instalacji)
+models/
+*.bin
+*.pt
+
+# DeepL klucz API — NIGDY na repo!
+.env
+config.ini
+*.key
+
+# IDE
+.vscode/
+.idea/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Logi
+*.log
