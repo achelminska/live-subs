@@ -31,3 +31,10 @@ Thumbs.db
 
 # Logi
 *.log
+
+# Dokumentacja robocza (PL, nie trafia na publiczne repo)
+LiveSubs_Dokumentacja.pdf
+LiveSubs_Plan_Projektu.pdf
+
+# Pliki testowe audio
+test_audio/
