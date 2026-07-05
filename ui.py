@@ -6,14 +6,16 @@ frameless and minimal; this panel is where you start/stop, tweak look,
 and quit without hunting for a close button on the overlay itself.
 """
 
-from pathlib import Path
-
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QCloseEvent, QIcon
+from app_paths import resource_path
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QPushButton,
     QSlider,
@@ -22,8 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-ICON_PATH = PROJECT_ROOT / "icon.ico"
+ICON_PATH = resource_path("icon.ico")
 
 PANEL_STYLE = """
 QWidget#ControlPanel {
@@ -101,7 +102,96 @@ QPushButton#Primary:hover {
 QPushButton#Danger:hover {
     background-color: #5c2a2a;
 }
+QDialog {
+    background-color: #14141f;
+    color: #e8e8ef;
+}
+QLineEdit {
+    background-color: #2a2a3d;
+    color: #e8e8ef;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+}
 """
+
+
+class ApiKeyDialog(QDialog):
+    """First-run / settings dialog for the DeepL API key."""
+
+    def __init__(self, parent=None, *, initial_key: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("Klucz API DeepL")
+        self.setFixedWidth(440)
+        self.setStyleSheet(PANEL_STYLE)
+
+        if ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(ICON_PATH)))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        title = QLabel("Tłumaczenie EN → PL")
+        title.setObjectName("Title")
+        layout.addWidget(title)
+
+        info = QLabel(
+            "LiveSubs potrzebuje darmowego klucza DeepL, żeby pokazywać polskie napisy.\n\n"
+            "1. Wejdź na deepl.com/pro-api\n"
+            "2. Załóż konto (plan Free wystarczy)\n"
+            "3. Skopiuj klucz API i wklej poniżej"
+        )
+        info.setObjectName("Subtitle")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        link_button = QPushButton("Otwórz deepl.com/pro-api")
+        link_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://www.deepl.com/pro-api"))
+        )
+        layout.addWidget(link_button)
+
+        key_label = QLabel("DEEPL_API_KEY")
+        key_label.setObjectName("SettingLabel")
+        layout.addWidget(key_label)
+
+        self.key_input = QLineEdit()
+        self.key_input.setPlaceholderText("np. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx")
+        self.key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        if initial_key:
+            self.key_input.setText(initial_key)
+        layout.addWidget(self.key_input)
+
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("color: #f85149; font-size: 12px;")
+        self.error_label.setWordWrap(True)
+        layout.addWidget(self.error_label)
+
+        buttons = QDialogButtonBox()
+        self.skip_button = buttons.addButton("Później (napisy po angielsku)", QDialogButtonBox.ButtonRole.RejectRole)
+        self.save_button = buttons.addButton("Zapisz i kontynuuj", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.save_button.setObjectName("Primary")
+        buttons.accepted.connect(self._on_save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_save(self):
+        from translate import is_valid_api_key
+
+        key = self.key_input.text().strip()
+        if not key:
+            self.error_label.setText("Wklej klucz API albo kliknij „Później”.")
+            return
+        if not is_valid_api_key(key):
+            self.error_label.setText("Klucz wygląda nieprawidłowo (powinien zawierać dwukropek, np. …:fx).")
+            return
+        self.error_label.setText("")
+        self.accept()
+
+    def api_key(self) -> str:
+        return self.key_input.text().strip()
 
 
 class ControlPanel(QWidget):
@@ -112,6 +202,7 @@ class ControlPanel(QWidget):
     font_size_changed = pyqtSignal(int)
     background_opacity_changed = pyqtSignal(int)
     audio_device_changed = pyqtSignal(dict)
+    api_key_change_requested = pyqtSignal()
 
     def __init__(self, loopback_devices: list[dict], default_device: dict):
         super().__init__()
@@ -184,6 +275,10 @@ class ControlPanel(QWidget):
 
         layout.addSpacing(8)
 
+        api_button = QPushButton("Ustaw klucz DeepL")
+        api_button.clicked.connect(self.api_key_change_requested.emit)
+        layout.addWidget(api_button)
+
         button_row = QHBoxLayout()
 
         self.toggle_button = QPushButton("Ukryj napisy")
@@ -232,6 +327,7 @@ class LiveSubsTray(QSystemTrayIcon):
 
     show_panel_requested = pyqtSignal()
     toggle_overlay_requested = pyqtSignal()
+    api_key_change_requested = pyqtSignal()
     quit_requested = pyqtSignal()
 
     def __init__(self):
@@ -249,6 +345,10 @@ class LiveSubsTray(QSystemTrayIcon):
         toggle_action = QAction("Pokaż / ukryj napisy", self)
         toggle_action.triggered.connect(self.toggle_overlay_requested.emit)
         menu.addAction(toggle_action)
+
+        api_action = QAction("Klucz API DeepL", self)
+        api_action.triggered.connect(self.api_key_change_requested.emit)
+        menu.addAction(api_action)
 
         menu.addSeparator()
 

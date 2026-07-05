@@ -8,7 +8,10 @@ from a .wav file (Stage 1) or from a live audio buffer (Stage 3.2).
 import numpy as np
 from faster_whisper import WhisperModel
 
+from app_paths import app_dir
+
 MODEL_SIZE = "small"
+MODEL_DIR = app_dir() / "models"
 
 
 def load_model() -> WhisperModel:
@@ -18,7 +21,13 @@ def load_model() -> WhisperModel:
     quantizes the model weights to lower precision, which speeds up
     inference and reduces memory usage at a small cost to quality.
     """
-    return WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    return WhisperModel(
+        MODEL_SIZE,
+        device="cpu",
+        compute_type="int8",
+        download_root=str(MODEL_DIR),
+    )
 
 
 def transcribe(model: WhisperModel, audio_path: str):

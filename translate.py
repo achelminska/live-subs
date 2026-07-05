@@ -9,11 +9,36 @@ identically on macOS and Windows — no platform limitations here.
 import os
 
 import deepl
-from dotenv import load_dotenv
 
-load_dotenv()
+from app_paths import load_env, save_env_value
 
-DEEPL_API_KEY = os.getenv("DEEPL_API_KEY")
+load_env()
+
+
+def get_api_key() -> str | None:
+    key = os.getenv("DEEPL_API_KEY", "").strip()
+    if not key or key.startswith("your-"):
+        return None
+    return key
+
+
+def is_api_key_configured() -> bool:
+    return get_api_key() is not None
+
+
+def is_valid_api_key(key: str) -> bool:
+    cleaned = key.strip()
+    return len(cleaned) >= 20 and ":" in cleaned
+
+
+def set_api_key(key: str) -> None:
+    """Persist key to .env and reset the cached DeepL client."""
+    global _translator
+    cleaned = key.strip()
+    save_env_value("DEEPL_API_KEY", cleaned)
+    os.environ["DEEPL_API_KEY"] = cleaned
+    _translator = None
+
 
 _translator = None
 
@@ -22,11 +47,10 @@ def get_translator() -> deepl.Translator:
     """Lazily creates a single DeepL client instance for the whole program."""
     global _translator
     if _translator is None:
-        if not DEEPL_API_KEY:
-            raise RuntimeError(
-                "DEEPL_API_KEY not found. Copy .env.example to .env and add your key."
-            )
-        _translator = deepl.Translator(DEEPL_API_KEY)
+        api_key = get_api_key()
+        if not api_key:
+            raise RuntimeError("DEEPL_API_KEY not configured.")
+        _translator = deepl.Translator(api_key)
     return _translator
 
 
@@ -38,6 +62,9 @@ def translate(text: str, target_lang: str = "PL") -> str:
     crashing the whole pipeline — a missing translation is much less
     disruptive than a dead program.
     """
+    if not is_api_key_configured():
+        return text
+
     try:
         translator = get_translator()
         result = translator.translate_text(text, target_lang=target_lang)

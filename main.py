@@ -24,14 +24,17 @@ from audio_capture import (
     find_loopback_device,
     list_loopback_devices_full,
 )
+from logging_setup import setup_logging
 from overlay import SubtitleOverlay
 from subtitle_filter import is_worth_translating
 from transcribe import load_model, transcribe_audio
-from translate import translate
-from ui import ICON_PATH, ControlPanel, LiveSubsTray
+from translate import is_api_key_configured, set_api_key, translate
+from ui import ApiKeyDialog, ControlPanel, ICON_PATH, LiveSubsTray
 
 CHUNK_QUEUE_SIZE = 2
 MIN_RMS = 0.003
+
+logger = setup_logging()
 
 
 class PipelineBridge(QObject):
@@ -88,14 +91,28 @@ class PipelineWorker:
 
     def _run(self):
         self.bridge.status_changed.emit("Ładowanie modelu Whisper...", False)
+        logger.info("Loading Whisper model (first run may download ~150 MB)...")
 
         try:
             model = load_model()
         except Exception as error:
-            self.bridge.status_changed.emit(f"Błąd modelu: {error}", False)
+            message = f"Błąd modelu: {error}"
+            logger.exception("Whisper model load failed")
+            self.bridge.status_changed.emit(message, False)
+            self.bridge.subtitle_changed.emit("Nie udało się załadować Whisper — zobacz livesubs.log")
             return
 
-        self.capture.start()
+        logger.info("Whisper model ready, starting audio capture on %s", self.capture.device_name)
+
+        try:
+            self.capture.start()
+        except Exception as error:
+            message = f"Błąd audio: {error}"
+            logger.exception("Audio capture start failed")
+            self.bridge.status_changed.emit(message, False)
+            self.bridge.subtitle_changed.emit("Nie udało się uruchomić loopback — zobacz livesubs.log")
+            return
+
         self._capture_active = True
         self.bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
 
@@ -110,30 +127,67 @@ class PipelineWorker:
                 continue
 
             self.bridge.status_changed.emit("Transkrypcja...", True)
+            logger.debug("Transcribing chunk, RMS=%.4f", rms)
 
             try:
                 segments, _ = transcribe_audio(model, audio)
             except Exception as error:
-                print(f"[pipeline] Transcription error: {error}")
+                logger.error("Transcription error: %s", error)
                 self.bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
                 continue
 
             english = " ".join(segment.text.strip() for segment in segments).strip()
             if not english or not is_worth_translating(english):
+                logger.debug("Skipped fragment: %r", english)
                 self.bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
                 continue
 
-            print(f"EN: {english}")
+            logger.info("EN: %s", english)
             polish = translate(english)
-            print(f"PL: {polish}\n")
+            logger.info("PL: %s", polish)
 
             self.bridge.subtitle_changed.emit(polish)
             self.bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
 
 
+def ensure_api_key(parent) -> bool:
+    """Show API key dialog if missing. Returns True when setup is OK to continue."""
+    if is_api_key_configured():
+        return True
+
+    dialog = ApiKeyDialog(parent)
+    result = dialog.exec()
+
+    if result == ApiKeyDialog.DialogCode.Accepted:
+        set_api_key(dialog.api_key())
+        logger.info("DeepL API key saved from first-run dialog")
+        return True
+
+    logger.info("Continuing without DeepL API key (English subtitles only)")
+    if parent is not None and hasattr(parent, "set_status"):
+        parent.set_status("Bez klucza DeepL — napisy po angielsku", active=False)
+    return True
+
+
+def configure_api_key(parent) -> bool:
+    """Open settings dialog to add or change the DeepL API key."""
+    from translate import get_api_key
+
+    dialog = ApiKeyDialog(parent, initial_key=get_api_key() or "")
+    if dialog.exec() != ApiKeyDialog.DialogCode.Accepted:
+        return False
+
+    set_api_key(dialog.api_key())
+    logger.info("DeepL API key updated from settings")
+    if parent is not None and hasattr(parent, "set_status"):
+        parent.set_status("Klucz DeepL zapisany — polskie napisy włączone", active=True)
+    return True
+
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("LiveSubs")
+    logger.info("LiveSubs starting (frozen=%s)", getattr(sys, "frozen", False))
 
     if ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(ICON_PATH)))
@@ -150,6 +204,10 @@ def main():
     overlay.show()
 
     panel = ControlPanel(loopback_devices=loopback_devices, default_device=default_device)
+
+    if not ensure_api_key(panel):
+        sys.exit(0)
+
     panel.show()
 
     bridge = PipelineBridge()
@@ -167,6 +225,7 @@ def main():
         bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
 
     panel.audio_device_changed.connect(on_audio_device_changed)
+    panel.api_key_change_requested.connect(lambda: configure_api_key(panel))
 
     overlay.show()
     overlay.raise_()
@@ -181,6 +240,7 @@ def main():
         tray = LiveSubsTray()
         tray.show_panel_requested.connect(panel.show)
         tray.toggle_overlay_requested.connect(panel.toggle_button.click)
+        tray.api_key_change_requested.connect(lambda: configure_api_key(panel))
         tray.quit_requested.connect(app.quit)
         tray.show()
 

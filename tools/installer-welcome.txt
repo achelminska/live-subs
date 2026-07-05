@@ -1,0 +1,13 @@
+LiveSubs — napisy na zywo EN -> PL
+
+Co robi ta aplikacja:
+  - Slucha dzwieku z glosnikow (nie mikrofonu)
+  - Rozpoznaje angielski mowe (Whisper)
+  - Wyswietla polskie napisy na ekranie (DeepL)
+
+Wymagania:
+  - Windows 10/11 (64-bit)
+  - Polaczenie z internetem (pierwsze uruchomienie pobiera model ~150 MB)
+  - Klucz API DeepL (darmowy plan wystarczy)
+
+Po instalacji uruchom LiveSubs z Menu Start lub skrotu na pulpicie.
