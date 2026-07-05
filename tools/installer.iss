@@ -24,7 +24,7 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-LicenseFile=..\LICENSE.txt
+LicenseFile=..\LICENSE
 InfoBeforeFile=..\tools\installer-welcome.txt
 
 [Languages]
