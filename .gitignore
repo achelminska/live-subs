@@ -10,6 +10,7 @@ env/
 build/
 dist/
 *.spec
+!livesubs.spec
 
 # Modele AI (za duże na repo, pobierają się przy instalacji)
 models/

@@ -19,7 +19,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
 
-from audio_capture import SystemAudioCapture
+from audio_capture import (
+    SystemAudioCapture,
+    find_loopback_device,
+    list_loopback_devices_full,
+)
 from overlay import SubtitleOverlay
 from subtitle_filter import is_worth_translating
 from transcribe import load_model, transcribe_audio
@@ -40,16 +44,15 @@ class PipelineBridge(QObject):
 class PipelineWorker:
     def __init__(
         self,
-        overlay: SubtitleOverlay,
         capture: SystemAudioCapture,
         bridge: PipelineBridge,
     ):
-        self.overlay = overlay
         self.capture = capture
         self.bridge = bridge
         self.stop_event = threading.Event()
         self.chunk_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=CHUNK_QUEUE_SIZE)
         self._thread: threading.Thread | None = None
+        self._capture_active = False
 
         capture.on_chunk = self._on_chunk
 
@@ -69,6 +72,19 @@ class PipelineWorker:
 
     def stop(self):
         self.stop_event.set()
+        if self.capture is not None:
+            self.capture.stop()
+
+    def swap_capture(self, capture: SystemAudioCapture):
+        """Hot-swap loopback device without reloading Whisper."""
+        if self.capture is not None:
+            self.capture.stop()
+
+        self.capture = capture
+        capture.on_chunk = self._on_chunk
+
+        if self._capture_active and not self.stop_event.is_set():
+            capture.start()
 
     def _run(self):
         self.bridge.status_changed.emit("Ładowanie modelu Whisper...", False)
@@ -80,6 +96,7 @@ class PipelineWorker:
             return
 
         self.capture.start()
+        self._capture_active = True
         self.bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
 
         while not self.stop_event.is_set():
@@ -121,22 +138,36 @@ def main():
     if ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(ICON_PATH)))
 
+    loopback_devices = list_loopback_devices_full()
+    if not loopback_devices:
+        print("No WASAPI loopback devices found.")
+        sys.exit(1)
+
+    default_device = find_loopback_device()
+    capture = SystemAudioCapture(on_chunk=lambda audio: None, device_info=default_device)
+
     overlay = SubtitleOverlay()
     overlay.show()
 
-    capture = SystemAudioCapture(on_chunk=lambda audio: None)
-    panel = ControlPanel(device_name=capture.device_name)
+    panel = ControlPanel(loopback_devices=loopback_devices, default_device=default_device)
     panel.show()
 
     bridge = PipelineBridge()
-    worker = PipelineWorker(overlay=overlay, capture=capture, bridge=bridge)
+    worker = PipelineWorker(capture=capture, bridge=bridge)
 
     bridge.status_changed.connect(panel.set_status)
     bridge.subtitle_changed.connect(overlay.set_text)
     panel.font_size_changed.connect(overlay.set_font_size)
     panel.background_opacity_changed.connect(overlay.set_background_opacity)
 
-    # Ensure overlay starts visible (panel toggle state is "shown").
+    def on_audio_device_changed(device_info: dict):
+        bridge.status_changed.emit("Zmiana źródła audio...", False)
+        new_capture = SystemAudioCapture(on_chunk=worker._on_chunk, device_info=device_info)
+        worker.swap_capture(new_capture)
+        bridge.status_changed.emit("Nasłuchuję — puść angielski dźwięk", True)
+
+    panel.audio_device_changed.connect(on_audio_device_changed)
+
     overlay.show()
     overlay.raise_()
 
@@ -157,10 +188,9 @@ def main():
 
     def shutdown():
         worker.stop()
-        capture.stop()
-        overlay.close()
         if tray is not None:
             tray.hide()
+        overlay.close()
 
     app.aboutToQuit.connect(shutdown)
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -50,6 +51,22 @@ QLabel#Device {
 QLabel#SettingLabel {
     font-size: 12px;
     color: #b0b0c8;
+}
+QComboBox {
+    background-color: #2a2a3d;
+    color: #e8e8ef;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+QComboBox::drop-down {
+    border: none;
+}
+QComboBox QAbstractItemView {
+    background-color: #2a2a3d;
+    color: #e8e8ef;
+    selection-background-color: #3d6fd9;
 }
 QSlider::groove:horizontal {
     height: 6px;
@@ -94,8 +111,9 @@ class ControlPanel(QWidget):
     overlay_visibility_changed = pyqtSignal(bool)
     font_size_changed = pyqtSignal(int)
     background_opacity_changed = pyqtSignal(int)
+    audio_device_changed = pyqtSignal(dict)
 
-    def __init__(self, device_name: str):
+    def __init__(self, loopback_devices: list[dict], default_device: dict):
         super().__init__()
         self.setObjectName("ControlPanel")
         self.setWindowTitle("LiveSubs")
@@ -105,10 +123,11 @@ class ControlPanel(QWidget):
         if ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PATH)))
 
+        self._loopback_devices = loopback_devices
         self._overlay_visible = True
-        self._build_ui(device_name)
+        self._build_ui(default_device)
 
-    def _build_ui(self, device_name: str):
+    def _build_ui(self, default_device: dict):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
@@ -125,10 +144,21 @@ class ControlPanel(QWidget):
         self.status_label.setObjectName("Status")
         layout.addWidget(self.status_label)
 
-        device_label = QLabel(f"Źródło: {device_name}")
-        device_label.setObjectName("Device")
-        device_label.setWordWrap(True)
-        layout.addWidget(device_label)
+        source_label = QLabel("Źródło audio (loopback)")
+        source_label.setObjectName("SettingLabel")
+        layout.addWidget(source_label)
+
+        self.device_combo = QComboBox()
+        default_index = 0
+        for index, device in enumerate(self._loopback_devices):
+            self.device_combo.addItem(device["name"], device)
+            if device["index"] == default_device["index"]:
+                default_index = index
+        self.device_combo.blockSignals(True)
+        self.device_combo.setCurrentIndex(default_index)
+        self.device_combo.blockSignals(False)
+        self.device_combo.currentIndexChanged.connect(self._on_device_changed)
+        layout.addWidget(self.device_combo)
 
         layout.addSpacing(8)
 
@@ -171,6 +201,14 @@ class ControlPanel(QWidget):
         hint.setObjectName("Subtitle")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+
+    def _on_device_changed(self, index: int):
+        device = self.device_combo.itemData(index)
+        if device is not None:
+            self.audio_device_changed.emit(device)
+
+    def selected_device(self) -> dict:
+        return self.device_combo.currentData()
 
     def _toggle_overlay(self):
         self._overlay_visible = not self._overlay_visible

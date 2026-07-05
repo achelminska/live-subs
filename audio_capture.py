@@ -39,19 +39,14 @@ def _resample(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarr
 
 def list_loopback_devices() -> list[dict]:
     """Return all WASAPI loopback devices (speaker output mirrored as input)."""
+    return list_loopback_devices_full()
+
+
+def list_loopback_devices_full() -> list[dict]:
+    """Return full PyAudio dicts — pass directly to SystemAudioCapture."""
     pa = pyaudio.PyAudio()
     try:
-        devices = []
-        for info in pa.get_loopback_device_info_generator():
-            devices.append(
-                {
-                    "index": info["index"],
-                    "name": info["name"],
-                    "channels": info["maxInputChannels"],
-                    "sample_rate": int(info["defaultSampleRate"]),
-                }
-            )
-        return devices
+        return list(pa.get_loopback_device_info_generator())
     finally:
         pa.terminate()
 
